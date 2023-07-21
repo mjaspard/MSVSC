@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import argparse as ap
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 from matplotlib.widgets import Button
 from obspy import read, read_inventory
 from obspy.core import UTCDateTime
@@ -473,7 +474,7 @@ if __name__ == '__main__':
 	ev_num_max = input("Catalog common event finished, enter a value to limit number of event ineeded, otherwise press Enter!")
 	try:
 		if int(ev_num_max) > 1:
-			merged_event = merged_event.sample(n=100, random_state=42)
+			merged_event = merged_event.sample(n=int(ev_num_max), random_state=42)
 	except:
 		print("error in user data input, keep the entire catalog event")
 
@@ -489,6 +490,8 @@ if __name__ == '__main__':
 		print("---------------------------------------")
 		print("station  = ", name ,"  param = ", param)
 
+
+		diff_stt_parr = []
 		count_sta_event = 0
 		for event_id in merged_event['EventID_x']:
 
@@ -516,19 +519,39 @@ if __name__ == '__main__':
 
 				rate = tr.stats.sampling_rate
 				datafull = tr.data
-				Data = datafull[100:-100]
+				# Data = datafull[100:-100]
 				# Data = tr.data
 
 				
-				# add for jos
+				# read starttime from stream (file mseed)
 				starttime = tr.stats.starttime
 				# round to 2 digit after sec
 				starttime = re.match(r".*\...", str(starttime))[0]
 				# format starttime to be able able to compoare string with event_info
 				starttime = starttime.replace("T", "-")
 
+				# Read from merged dataframe origin and starttime
+				origin_time = merged_event.loc[merged_event['EventID_x'] == int(event_id), 'OriginTime']
+				start_time = merged_event.loc[merged_event['EventID_x'] == int(event_id), 'StartTime']
+
+				# convert to datetime object 
+				origin_time_ = datetime.strptime(origin_time.values[0], "%Y-%m-%d-%H:%M:%S.%f")
+				start_time_ = datetime.strptime(start_time.values[0], "%Y-%m-%d-%H:%M:%S.%f")
+
 				# end
 				
+
+				# print("")
+				# print("starttime = ", starttime)
+				# print(type(starttime))
+				# print("origin_time = ", origin_time.values[0])
+				# print(type(origin_time.values[0]))
+				# print("origin_time = ", origin_time_)
+				# print(type(origin_time_))
+				# print("start_time = ", start_time)
+				# print(type(start_time))
+
+
 				# Original picker function
 				# p_arr, quality = picker(Data, rate)
 				# print("p_arr (original) = ", p_arr)
@@ -537,13 +560,37 @@ if __name__ == '__main__':
 				p_arr_man = picker_new(sacname)
 				if not p_arr_man:
 					continue
-				p_arr_man = p_arr_man - 2 # !!! because Data = datafull[100:-100] --> 
-				# New picker functiom
-				p_arr = p_arr_man
+
+			
+				# convert p_arr to datetime object
+				p_arr_man_ = datetime.strptime(str(p_arr_man), "%S.%f")
+				noise_time_  = origin_time_ - start_time_ + timedelta(seconds = float(p_arr_man))
+				# print("p_arr_man = ", p_arr_man)
+				# print("p_arr_man_ = ", p_arr_man_)
+				# print("noise_time_ = ", noise_time_)
+
+				noise_time = float(noise_time_.total_seconds())
+				# print("noise_time = ", noise_time)
+
+				# Cut the stream to have 3 seconds before the Pick and seventeen after
+				cut_start_ = noise_time_  - timedelta(seconds = 3)
+				cut_start = float(cut_start_.total_seconds())
+				cut_start_pt = int(cut_start * rate)
+				# print("cut_start = ", cut_start)
+				# print("cut_start_pt = ", cut_start_pt)
+				# Cut the beginning of the stream 
+				Data = datafull[cut_start_pt:-100]
+				# Keep the 20 seconds of the cutted stream
+				cut_end_pt = int((20 * rate) + cut_start_pt)
+				Data = datafull[cut_start_pt:cut_end_pt]
+				
+				# print("noise_time = ", noise_time)
 
 				# print("p_arr (jos) = ", p_arr_man)
 
-				# input("wait...")
+				# To use to calculate noise but be careful that p_arr can be < 2 in several cases
+				p_arr = p_arr_man
+
 
 
 				#--------------------------------------------------------
@@ -557,7 +604,7 @@ if __name__ == '__main__':
 					x = np.arange(len(Data)) * tr.stats.delta
 
 					# Define the specific time from the beginning of the stream
-					specific_time = x[0] + p_arr  
+					specific_time = x[0] + 3
 
 					# Extract y-axis values (amplitude)
 					y = Data
@@ -579,8 +626,8 @@ if __name__ == '__main__':
 					ax.plot(slower, y, supper, y)
 
 					# add vetical ine where jos picked manually the event
-					ax.axvline(x=p_arr_man, color='red', linestyle='--')
-					ax.text(p_arr_man, max(y), 'Jos pick manual', color='red', fontsize=10)
+					# ax.axvline(x=noise_time, color='red', linestyle='--')
+					# ax.text(p_arr_man, max(y), 'Jos pick manual', color='red', fontsize=10)
 
 					# Create the quit button
 					button_ax = plt.axes([0.8, 0.05, 0.1, 0.075])  # Adjust the position and size as needed
@@ -617,8 +664,8 @@ if __name__ == '__main__':
 	dict_event = remove_dict(dict_event, dict_sta, namp_len)
 	# print("dict_event key = ")
 	# print(dict_event.keys())
-	print("dict_event = ")
-	print(dict_event)
+	# print("dict_event = ")
+	# print(dict_event)
 	
 	input("Datas are read, Click to continue to ....")
 	
