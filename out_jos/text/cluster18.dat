@@ -1,0 +1,9 @@
+Index(['index', 'EventID', 'OriginTime', 'long[degE]', 'lat[degN]',
+       'depth[km]', 'mag[ML]', 'FI', 'class', 'RMS', 'nb_obs', 'nb_stat',
+       'dist[km]', 'gap[deg]', 'err_long', 'err_lat', 'err_depth', 'ell_long',
+       'ell_lat', 'ell_azim', 'num_P', 'num_S', 'min_P[s]', 'max_S[s]',
+       'StartTime', 'duration[s]', 'CLUSTER'],
+      dtype='object')
+[11746 201912721 '2019-11-18-21:54:50.490' 29.274 -1.528 19.98 1.0 '-0.16'
+ 3 0.69 22 22 21.45 75.059 3.69 4.65 6.49 2.158 1.561 -15.949 11 11 4.34
+ 38.42 '2019-11-18-21:54:34.84' 94 '9']

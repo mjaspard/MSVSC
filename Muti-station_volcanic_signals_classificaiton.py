@@ -13,6 +13,7 @@ import json
 import glob
 import math
 import pickle
+import sys
 import numpy as np
 import pandas as pd
 import argparse as ap
@@ -168,27 +169,59 @@ def clust_stats(clust, whether_plot):
 	plt.close()
 
 
+# def new_catalog(labels, event_info, events_key, median_FI, sort_idx):
+# 	k = 1
+# 	new_events_catalog = []
+# 	event_info.values[0][0] = event_info.values[0][0]  \
+# 							  + ' FI' + ' CLUSTER'
+# 	for i in range(len(events_key)):
+# 		for j in range(k, len(event_info.values)):
+# 			if events_key[i] == event_info.values[j][0].split(' ')[0]:
+# 				event_info.values[j][0] = event_info.values[j][0] + ' ' \
+# 					+ str(round(median_FI[i], 2)) + ' ' + str(np.where(sort_idx == labels[i])[0][0])
+# 				new_events_catalog.append(event_info.values[j][0])
+# 				k = j
+# 				break
+
+# 	for i in range(len(sort_idx)):
+# 		idx_cls = np.where(labels == sort_idx[i])[0]
+# 		with open('./out/text/cluster'+str(i)+'.dat', 'w') as f:
+# 			for j in range(len(idx_cls)):
+# 				f.write(new_events_catalog[idx_cls[j]] + '\n')
+
+# 	event_info.to_csv('out/text/new_catalog', index=False, header=None)
+
 def new_catalog(labels, event_info, events_key, median_FI, sort_idx):
 	k = 1
+	print("new_catalog step 1")
 	new_events_catalog = []
-	event_info.values[0][0] = event_info.values[0][0]  \
+	event_info.values[0][0] = str(event_info.values[0][0])  \
 							  + ' FI' + ' CLUSTER'
 	for i in range(len(events_key)):
+		print("1 - ", i)
 		for j in range(k, len(event_info.values)):
-			if events_key[i] == event_info.values[j][0].split(' ')[0]:
-				event_info.values[j][0] = event_info.values[j][0] + ' ' \
+			print(" if {} = {}".format(events_key[i], str(event_info.values[j][0]).split(' ')[0]))
+			sys.stdout.write('\r' + f"Progress: {j}/{len(event_info.values)}")
+			sys.stdout.flush()
+			if events_key[i] == str(event_info.values[j][0]).split(' ')[0]:
+				print("match !!!!!!!")
+				print("{} = {}".format(events_key[i], str(event_info.values[j][0]).split(' ')[0]))
+
+				input("click to continue")
+				event_info.values[j][0] = str(event_info.values[j][0]) + ' ' \
 					+ str(round(median_FI[i], 2)) + ' ' + str(np.where(sort_idx == labels[i])[0][0])
-				new_events_catalog.append(event_info.values[j][0])
+				new_events_catalog.append(str(event_info.values[j][0]))
 				k = j
 				break
-
+	print("new_catalog step 2")
 	for i in range(len(sort_idx)):
+		print("2 - ", i)
 		idx_cls = np.where(labels == sort_idx[i])[0]
-		with open('./out/text/cluster'+str(i)+'.dat', 'w') as f:
+		with open('./out_jos/text/cluster'+str(i)+'.dat', 'w') as f:
 			for j in range(len(idx_cls)):
 				f.write(new_events_catalog[idx_cls[j]] + '\n')
 
-	event_info.to_csv('out/text/new_catalog', index=False, header=None)
+	event_info.to_csv('out_jos/text/new_catalog', index=False, header=None)
 				 
 
 def plot_rep(clust, amp, sort_idx):

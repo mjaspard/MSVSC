@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import argparse as ap
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 from matplotlib.widgets import Button
 from obspy import read, read_inventory
@@ -231,21 +232,31 @@ def clust_stats(clust, whether_plot):
 
 
 def new_catalog(labels, event_info, events_key, median_FI, sort_idx):
-	k = 1
-	print("new_catalog step 1")
+	k = 0
+	event_info_temp = event_info[event_info['StartTime'].isin(events_key)]
+	event_info_temp = event_info_temp.reset_index()
 	new_events_catalog = []
-	event_info.values[0][0] = str(event_info.values[0][0])  \
-							  + ' FI' + ' CLUSTER'
+
+	# event_info_temp.values[0][0] = str(event_info_temp.values[0][0])  \
+	# 						  + ' FI' + ' CLUSTER'
+	# add 2 new column to event catalog
+	event_info_temp['FI'] = False
+	event_info_temp['CLUSTER'] = False
+	new_events_catalog.append(str(event_info_temp.keys()))
 	for i in range(len(events_key)):
 		print("1 - ", i)
-		for j in range(k, len(event_info.values)):
-			if events_key[i] == str(event_info.values[j][0]).split(' ')[0]:
-				event_info.values[j][0] = str(event_info.values[j][0]) + ' ' \
-					+ str(round(median_FI[i], 2)) + ' ' + str(np.where(sort_idx == labels[i])[0][0])
-				new_events_catalog.append(str(event_info.values[j][0]))
+		for j in range(k, len(event_info_temp.values)):
+			
+			# sys.stdout.write('\r' + f"Progress: {j}/{len(event_info_temp.values)}")
+			# sys.stdout.flush()
+			if events_key[i] == event_info_temp['StartTime'][j]:
+
+				event_info_temp['FI'][j] = str(round(median_FI[i], 2))
+				event_info_temp['CLUSTER'][j] = str(np.where(sort_idx == labels[i])[0][0])
+
+				new_events_catalog.append(str(event_info_temp.values[j]))
 				k = j
 				break
-	print("new_catalog step 2")
 	for i in range(len(sort_idx)):
 		print("2 - ", i)
 		idx_cls = np.where(labels == sort_idx[i])[0]
@@ -253,7 +264,7 @@ def new_catalog(labels, event_info, events_key, median_FI, sort_idx):
 			for j in range(len(idx_cls)):
 				f.write(new_events_catalog[idx_cls[j]] + '\n')
 
-	event_info.to_csv('out_jos/text/new_catalog', index=False, header=None)
+	event_info_temp.to_csv('out_jos/text/new_catalog', index=False, header=None)
 				 
 
 def plot_rep(clust, amp, sort_idx):
@@ -388,6 +399,23 @@ def plot_dendrogram(median_distance, n_cls):
 	if whether_plot:
 		plt.show()
 	plt.close()
+
+def print_c(*args, sep=' ', end=''):
+    output = sep.join(str(arg) for arg in args)
+    print(output, end=end, flush=True)
+
+def run_f(variable):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if variable:
+                result = func(*args, **kwargs)
+                return result
+            else:
+                print("Function not executed because the variable is False.")
+        return wrapper
+    return decorator
+
+
 ###################################################################
 
 
@@ -402,8 +430,25 @@ if __name__ == '__main__':
 		default=False,
 		action='store_true',
 		help='Plot output')
+	parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose mode")
 	args = parser.parse_args()
 	whether_plot = args.P
+	verbose = args.verbose
+
+	@run_f(verbose)
+	def print_x(*args):
+		print(*args)
+
+	@run_f(verbose)
+	def input_x(*args):
+		input(*args)
+
+
+
+	print("Start scripts:")
+	if verbose:
+		print("Verbose mode is activated")
+	print_c("Open config file --> ")
 
 	with open(args.config_json_jos, "r") as f:
 		params = json.load(f)
@@ -426,12 +471,14 @@ if __name__ == '__main__':
 	#the length of amplitude
 	namp_len = math.ceil(2*win_len*15)
 
-
+	print("ok")
+	print_c("Open inventory --> ")
 	# Inventory declaration 
 	inventory = "2019-10-21_ECGSNetworks_v0.7_KV-AF_SC3-OVG.xml"
 	inv = read_inventory(inventory)
-
+	print("ok")
 	# Test the picker by showing each stream
+
 	test_pick = input("Check picking ? [y/n]")
 	if re.match("[y/Y]", test_pick):
 		test_pick = True
@@ -440,6 +487,8 @@ if __name__ == '__main__':
 
 
 	# Fill Dictionary
+	print("Open station info and events catalog and write them in dictionary and dataframe:")
+	input_x("click to continue...")
 	station_info = pd.read_table(station_list, header=None)
 	for i in range(len(station_info.values)):
 		dict_sta[station_info.values[i][0]] = i
@@ -451,7 +500,18 @@ if __name__ == '__main__':
 		dict_event[event_info['StartTime'][i]] =	[[] for i in range(len(station_info.values))]
 	
 
+
+
+	print_x("dict_event =")
+	print_x(dict_event)	
+	print_x("event_info =")
+	print_x(event_info)
+	print_x("dict_sta = ")
+	print_x(dict_sta)
+	input_x("click to continue...")
+
 	# Create merged_event dictionary to keep only common event
+	print("Create merged_event dictionary to keep only common event")
 	merged_event = event_info
 	keep_columns = "OriginTime , StartTime, EventID_x"
 	selected_columns = [col.strip() for col in keep_columns.split(',')]
@@ -478,15 +538,27 @@ if __name__ == '__main__':
 	except:
 		print("error in user data input, keep the entire catalog event")
 
-	print(merged_event)
-	input("wait...")
+	print_x("merged_event = ")
+	print_x(merged_event)
+	input_x("click to continue...")
 
 
+
+	print("")
+	print("Loop through each station folder, then loop through eache event and open sequentially each corresponding mseed files found in catalog common.")
+	print("Do the following with each of them:")
+	print("  ->  Open stream, remove response and apply band filter")
+	print("  ->  Extract starttime from stream")
+	print("  ->  Extract start_time and origin_time from events catalog")
+	print("  ->  Extract corresponding p_arr_man (which is pick manual by Jos in CAT_IN catalog of the corresponding station)")
+	print("  ->  Cut the stream 3 sec before the pick and 17 sec after the pick")
+	print("  ->  Calculate SNR value, fft_amp and amp_nmlz if noise is under threshold")
+	print("  ->  Fill dict_event with these value")
+	print("  ->  Display 2 methofd of plotting the sismo stream if requested")
+	input_x("click to continue...")
 
 
 	for name, param in dict_sta.items():
-		
-		print("")
 		print("---------------------------------------")
 		print("station  = ", name ,"  param = ", param)
 
@@ -498,6 +570,7 @@ if __name__ == '__main__':
 			station_dir = glob.glob("PhD_data_class/CAT_2019/DAT/KV/"+name+"/"+str(event_id)+"/*")
 			for sacname in station_dir :
 				try:
+					st = read(sacname)
 					tr = read(sacname)[0]
 
 				except:
@@ -538,38 +611,21 @@ if __name__ == '__main__':
 				origin_time_ = datetime.strptime(origin_time.values[0], "%Y-%m-%d-%H:%M:%S.%f")
 				start_time_ = datetime.strptime(start_time.values[0], "%Y-%m-%d-%H:%M:%S.%f")
 
-				# end
-				
-
-				# print("")
-				# print("starttime = ", starttime)
-				# print(type(starttime))
-				# print("origin_time = ", origin_time.values[0])
-				# print(type(origin_time.values[0]))
-				# print("origin_time = ", origin_time_)
-				# print(type(origin_time_))
-				# print("start_time = ", start_time)
-				# print(type(start_time))
-
-
-				# Original picker function
-				# p_arr, quality = picker(Data, rate)
-				# print("p_arr (original) = ", p_arr)
-				# print("quality = ", quality)			
-
 				p_arr_man = picker_new(sacname)
 				if not p_arr_man:
 					continue
-
-			
+	
 				# convert p_arr to datetime object
 				p_arr_man_ = datetime.strptime(str(p_arr_man), "%S.%f")
 				noise_time_  = origin_time_ - start_time_ + timedelta(seconds = float(p_arr_man))
+				pick_abs_ = origin_time_ + timedelta(seconds = float(p_arr_man))
 				# print("p_arr_man = ", p_arr_man)
 				# print("p_arr_man_ = ", p_arr_man_)
 				# print("noise_time_ = ", noise_time_)
+				# print("pick_abs_ = ", pick_abs_)
 
 				noise_time = float(noise_time_.total_seconds())
+				noise_time_pt = noise_time * rate
 				# print("noise_time = ", noise_time)
 
 				# Cut the stream to have 3 seconds before the Pick and seventeen after
@@ -579,7 +635,9 @@ if __name__ == '__main__':
 				# print("cut_start = ", cut_start)
 				# print("cut_start_pt = ", cut_start_pt)
 				# Cut the beginning of the stream 
-				Data = datafull[cut_start_pt:-100]
+				# Data = datafull[cut_start_pt:-100]
+
+
 				# Keep the 20 seconds of the cutted stream
 				cut_end_pt = int((20 * rate) + cut_start_pt)
 				Data = datafull[cut_start_pt:cut_end_pt]
@@ -591,59 +649,6 @@ if __name__ == '__main__':
 				# To use to calculate noise but be careful that p_arr can be < 2 in several cases
 				p_arr = p_arr_man
 
-
-
-				#--------------------------------------------------------
-				########### Display plot (plot the event) ################
-				
-				if test_pick:
-				
-				
-					# Extract x-axis values (time)
-					print("tr.stats.delta = ", tr.stats.delta)
-					x = np.arange(len(Data)) * tr.stats.delta
-
-					# Define the specific time from the beginning of the stream
-					specific_time = x[0] + 3
-
-					# Extract y-axis values (amplitude)
-					y = Data
-
-					supper = np.ma.masked_where(x <= specific_time, x)
-					slower = np.ma.masked_where(x >= specific_time, x)
-				
-					# print(x)
-					# print(supper)
-					# print(slower)			
-				
-					# Create a figure
-					fig, ax = plt.subplots()
-
-					ax.get_figure().set_figwidth(20)   # Width: 8 inches
-					ax.get_figure().set_figheight(8)  # Height: 6 inches
-
-				
-					ax.plot(slower, y, supper, y)
-
-					# add vetical ine where jos picked manually the event
-					# ax.axvline(x=noise_time, color='red', linestyle='--')
-					# ax.text(p_arr_man, max(y), 'Jos pick manual', color='red', fontsize=10)
-
-					# Create the quit button
-					button_ax = plt.axes([0.8, 0.05, 0.1, 0.075])  # Adjust the position and size as needed
-					quit_button = Button(button_ax, 'Quit')
-
-					# Add the quit button click event handler
-					quit_button.on_clicked(quit_button_clicked)
-				
-					# Show the plot
-					plt.show()
-
-				######### finished ##################
-				#--------------------------------------------------------
-				
-
-
 				# if p_arr > win_snr and p_arr < t[-1]-win_snr and quality > snr:
 				if p_arr > win_snr and p_arr < t[-1]-win_snr:
 
@@ -653,21 +658,176 @@ if __name__ == '__main__':
 						Amp_nmlz, freq_nmlz = amp_nmlz(freq, amp)
 						name_event = starttime
 
+
 						if (name_event in dict_event.keys()):
 							dict_event[name_event][param].append(Amp_nmlz)
 							dict_event[name_event][param].append(fi)
 
-###########################################################################
+				#--------------------------------------------------------
+				########### Display plot (plot the event) ################
+				
+				if test_pick:
+				
+			
 
+					# Extract x-axis values (time)
+					print("tr.stats.delta = ", tr.stats.delta)
+
+
+					# Define data ax1
+					x_1 = np.arange(len(datafull))
+
+					specific_time_1	 = x_1[0] + noise_time_pt
+					y_1 = datafull
+					supper_1 = np.ma.masked_where(x_1 < specific_time_1, x_1)
+					slower_1 = np.ma.masked_where(x_1 > specific_time_1, x_1)
+				
+					# Define data ax1
+					x_2 = np.arange(len(Data)) * tr.stats.delta
+					specific_time_2	 = x_2[0] + 3
+					y_2 = Data
+					supper_2 = np.ma.masked_where(x_2 < specific_time_2, x_2)
+					slower_2 = np.ma.masked_where(x_2 > specific_time_2, x_2)
+				
+					# Turn on interactive mode
+					# plt.ion()
+					# Create a figure
+					fig = plt.figure(figsize=(24, 14))
+
+					plt.subplot(2, 1, 1)
+					# ax[0].get_figure().set_figwidth(20)   # Width: 8 inches
+					# ax[0].get_figure().set_figheight(8)  # Height: 6 inches
+
+					# ax[1].get_figure().set_figwidth(20)   # Width: 8 inches
+					# ax[1].get_figure().set_figheight(8)  # Height: 6 inches
+
+				
+					# ax[0].plot(slower_1, y_1, supper_1, y_1)
+					plt.plot(slower_2, y_2, supper_2, y_2)
+
+					# add vetical ine where jos picked manually the event
+					# ax.axvline(x=noise_time, color='red', linestyle='--')
+					# ax.text(p_arr_man, max(y), 'Jos pick manual', color='red', fontsize=10)
+
+					
+				
+					plt.title(event_id)
+					plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+					# Plot the filtered Stream
+					# plt.show()
+					# Show the plot
+
+
+				######### finished ##################
+
+
+
+						#-------------------  Plot in obspy   ---------------------#
+					# Plot in obspy
+					print(" ---- start plotting obspy -----")
+					# Specify the desired time interval (start and end times)
+					start_time_obspy_ = start_time_ + cut_start_
+					cut_start_obspy = datetime.strftime(start_time_obspy_, "%Y-%m-%dT%H:%M:%S.%f")
+					cut_end_ = start_time_obspy_ + timedelta(seconds = 20)
+					cut_end_obspy = datetime.strftime(cut_end_, "%Y-%m-%dT%H:%M:%S.%f")
+
+					pick_abs_obspy= datetime.strftime(pick_abs_, "%Y-%m-%dT%H:%M:%S.%f")
+
+
+					start_time = UTCDateTime(cut_start_obspy)  # Replace with your desired start time
+					end_time = UTCDateTime(cut_end_obspy)    # Replace with your desired end time
+					pick_time = UTCDateTime(pick_abs_obspy) 
+
+					# Filter the Stream to retain only data within the specified time interval
+					stream_interval = st.slice(starttime=start_time, endtime=end_time)
+					tr2 = stream_interval[0]
+					tr2.remove_response(inventory=inv)
+					tr2.filter(type='bandpass', freqmin=1, freqmax=15)
+
+
+					print(st[0].stats.starttime)
+					print(tr2.stats.starttime)
+					# input("wait ----")
+
+
+
+					# Extract timestamps (in seconds from the start time) from the sliced Stream
+					timestamps = tr2.times()  # Assuming there is only one channel in the stream
+					# create an array of timedelta
+					timedelta_objects = [timedelta(seconds=x) for x in timestamps]
+
+					print("timedelta_objects[0] = ", timedelta_objects[0])
+
+					# extract strattime from obspy stream and convert the UTCDatetime to DateandTime
+					starttime_obspy = tr2.stats.starttime
+					starttime_ = UTCDateTime(starttime_obspy).datetime
+
+
+					print("starttime_ = ", starttime_)
+					# Create array of time axis for sliced stream with datetime object
+					datetime_objects = [x + starttime_ for x in timedelta_objects ]
+
+					print("datetime_objects[0] = ", datetime_objects[0])
+
+					# Extract data from the sliced Stream
+					data = tr2.data  # Assuming there is only one channel in the stream
+					plt.subplot(2, 1, 2)
+
+					plt.plot(datetime_objects, data)
+					plt.axvline(x=pick_abs_, color='red', linestyle='--')
+
+					# Customize the plot (optional)
+					plt.title(event_id)
+					plt.xlabel('Time')
+					plt.ylabel('Amplitude')
+
+					# Rotate and format the x-axis labels for better readability
+					plt.xticks(rotation=20, ha='right')
+					plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d %H:%M:%S'))
+					plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
+
+
+					# Create the quit button
+					button_ax = plt.axes([0.8, 0.05, 0.1, 0.075])  # Adjust the position and size as needed
+					quit_button = Button(button_ax, 'Quit')
+
+					# Add the quit button click event handler
+					quit_button.on_clicked(quit_button_clicked)
+
+					plt.show()
+
+
+
+					#-------------------  Plot in obspy (end)  ---------------------#
+
+				#--------------------------------------------------------
+				
+
+
+
+
+###########################################################################
 	print("")
-	print("remove dict function start")
+	input_x("Dsiplay updated dict_event dict, continue...")
+	print_c("dict_event = ")
+	print_x(dict_event)
+	print_c("dict_event length = ")
+	print(len(dict_event))
+	input_x("click to continue...")
+	print("")
+	print("remove dict function execution")
+	input_x("click to continue...")
 	dict_event = remove_dict(dict_event, dict_sta, namp_len)
-	# print("dict_event key = ")
-	# print(dict_event.keys())
-	# print("dict_event = ")
-	# print(dict_event)
-	
-	input("Datas are read, Click to continue to ....")
+
+	print_x("dict_event = ")
+	print_x(dict_event)
+	print_x("dict_event key = ")
+	print_x(dict_event.keys())
+	print_c("dict_event length = ")
+	print(len(dict_event))
+	input_x("click to continue...")
+	# input("Datas are read, Click to continue to ....")
 	
 	print("Get Median Value")
 	median_FI, median_amp, events_key = get_median_value(dict_event, namp_len, whether_plot)
@@ -696,7 +856,7 @@ if __name__ == '__main__':
 	print("freq-evengy space")
 	freq_energy_distribution(mean_amp_container, freq, sort_idx, len_idx)
 	#save files
-	print("save file")
+	print("save new catalog")
 	new_catalog(clust.labels_, event_info, events_key, median_FI, sort_idx)
 
 
