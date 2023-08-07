@@ -9,16 +9,23 @@
 '''
 
 import os
+import shutil
+import fnmatch
+import sys
+import re
 import json
 import glob
 import math
 import pickle
-import sys
 import numpy as np
 import pandas as pd
 import argparse as ap
 import matplotlib.pyplot as plt
-from obspy import read
+import matplotlib.dates as mdates
+import matplotlib.gridspec as gridspec
+from datetime import datetime, timedelta
+from matplotlib.widgets import Button
+from obspy import read, read_inventory
 from obspy.core import UTCDateTime
 from obspy.signal.trigger import recursive_sta_lta
 from sklearn.cluster import AgglomerativeClustering
@@ -26,10 +33,17 @@ from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import dendrogram, linkage
 
 
-####################################################
-"""
-This part is data processing.
-"""
+######################################################################################################################################
+######################   FUNCTION   ##################################################################################################
+######################################################################################################################################
+
+# Function to handle the stop button click event
+def quit_button_clicked(event):
+    plt.close('all')
+    raise SystemExit("Script terminated by user")
+
+
+
 def SNR(data, arr, rate, win, tol=0.5):
 	narr = int(arr * rate)
 	nwin = int(win * rate)
@@ -49,6 +63,7 @@ def amp_nmlz(fz,x):
 #sometimes the rate may not 100 , so it best for us to have a resample firstly.
 #fft
 def fft_amp(Data, rate, arr, win_len):
+
 	narr = int(arr * rate)
 	nwin_len = int(win_len * rate)
 	Data = Data[narr-nwin_len:narr+nwin_len]
@@ -57,21 +72,50 @@ def fft_amp(Data, rate, arr, win_len):
 	amp = np.abs(sp)
 	A_upper = np.mean(amp[(freq>5.0) & (freq<15.0)])
 	A_lower = np.mean(amp[(freq>1.0) & (freq<5.0)])
+	# input("wait  us...")
 	return amp[(freq>=0) & (freq<15.0)], freq[(freq>=0) & (freq<15.0)], math.log10(A_upper/A_lower)
 
 
 def picker(data, rate, nsta=10, nlta=100, uncer=0.5):
+
+
 	stalta = recursive_sta_lta(data, nsta, nlta)
 	n_max = np.argmax(stalta)
 	quality = stalta[n_max]
 	n_onset = int(uncer * rate)
+	diff_max = np.diff(stalta[n_max-n_onset:n_max+n_onset])
 	n_diff_max = np.argmax(np.diff(stalta[n_max-n_onset:n_max+n_onset]))
 	n_pick = n_max - n_onset + n_diff_max
 	arr = n_pick / rate
 	return	arr, quality
 
+def picker_new(file):
+	dirname1 = os.path.dirname(file)
+	num_event = os.path.basename(dirname1)
+	dirname2 = os.path.dirname(dirname1)
+	cat_in = [file for file in os.listdir(dirname2) if fnmatch.fnmatch(file, "CAT_IN" + '*')]
+	if len(cat_in) != 1:
+		return False
+	cat_in = "{}/{}".format(dirname2, cat_in[0])
+	df = pd.read_csv(cat_in, sep='\s+')
+
+	arr_P = df.loc[df['EventID'] == int(num_event), 'arr_P[s]']
+	if arr_P.empty:
+		return False
+
+	return arr_P.values[0]
+
+def plot_array(array):
+    plt.plot(array)
+    plt.show()
+
+
+	# input("wait...")
+
 ################################################################################################
 def remove_dict(dict_event, dict_sta, namp_len):
+	""" For each event, loop through each station and check if the amp_nmlz length is = 39
+		If this number is not ok for a certain amount of station, remove the event from the list""" 
 	need_delete = []
 	for key in dict_event.keys():
 		num_sta = 0
@@ -80,7 +124,7 @@ def remove_dict(dict_event, dict_sta, namp_len):
 				# remove those which length is not 39
 				if len(dict_event[key][i][0])== namp_len:
 					num_sta += 1
-		if num_sta < 4:
+		if num_sta < least_station :
 			need_delete.append(key)
 			   
 	for rem in range(len(need_delete)):
@@ -90,37 +134,76 @@ def remove_dict(dict_event, dict_sta, namp_len):
 
 
 def get_median_value(dict_event, namp_len, whether_plot):
+	""" We loop through each events from dict events, and for each each events we loop through each station
+	and do the following:
+	If data ara available for the station, we check in length of "Amp_nmls" is well = "namp_lem (=39), 
+		--> if yes we add "Amp_nmlz" in tempo_amp and "fi" in tempo_fi
+	Then, before looping to the next events we add in median_FI and median_amp the value from median station as follow:
+		--> we check the legth of tempo_FI to know how many station do have value for this event
+		--> if number is pair, we pop the tempo_FI array at index 0
+		--> we calculte the index of median value of tempo_FI
+		--> we add in median_FI and median_amp the value from tempo_xxx at median index.
+	"""
 	median_FI = []
 	median_amp = []
 	events_key = []
+	waveform = []
 	for key, value1 in dict_event.items():
 		tempo_FI = []
 		tempo_amp = []
-		events_key.append(key)
+		tempo_waveform = []
+		# events_key.append(key)
+
 		for para in dict_sta.values():
 			if (value1[para] != []):
 				if (len(value1[para][0]) == namp_len):
-					tempo_FI.append(value1[para][1])
-					tempo_amp.append(value1[para][0])
-		if len(tempo_FI)%2 == 1:
-			median_as = tempo_FI.index(np.median(tempo_FI))
-			if isinstance(median_as, int):
-				median_FI.append(tempo_FI[median_as])
-				median_amp.append(tempo_amp[median_as])
-			else:
-				median_as = median_as[0]
-				median_FI.append(tempo_FI[median_as])
-				median_amp.append(tempo_amp[median_as])
-		else:
-			tempo_FI.pop(0)
-			median_as = tempo_FI.index(np.median(tempo_FI))
-			if isinstance(median_as, int):
-				median_FI.append(tempo_FI[median_as])
-				median_amp.append(tempo_amp[median_as])
-			else:
-				median_as = median_as[0]
-				median_FI.append(tempo_FI[median_as])
-				median_amp.append(tempo_amp[median_as])
+					# tempo_FI.append(value1[para][1])
+					# tempo_amp.append(value1[para][0])
+					# tempo_waveform.append(value1[para][2])
+					median_FI.append(value1[para][1])
+					median_amp.append(value1[para][0])
+					waveform.append(value1[para][2])
+					events_key.append(key)
+
+		##################################################################################################
+		####### Comment stuff below because not needed anymore since we work wuth unique station #########
+		##################################################################################################
+
+
+		# if len(tempo_FI)%2 == 1:
+		# 	median_as = tempo_FI.index(np.median(tempo_FI))
+
+		# 	if isinstance(median_as, int):
+		# 		median_FI.append(tempo_FI[median_as])
+		# 		median_amp.append(tempo_amp[median_as])
+		# 		median_amp.append(tempo_amp[median_as])
+		# 	else:
+		# 		median_as = median_as[0]
+		# 		median_FI.append(tempo_FI[median_as])
+		# 		median_amp.append(tempo_amp[median_as])
+		# 		waveform.append(tempo_waveform[median_as])
+		# 		waveform[key] = [median_as, [tempo_waveform[median_as]]]
+		# 		input("??????")
+		# 	# print("median_FI = ", median_FI)
+		# else:
+		# 	# print("tempo_FI = ", tempo_FI)
+		# 	tempo_FI.pop(0)
+		# 	# print("tempo_FI = ", tempo_FI)
+		# 	median_as = tempo_FI.index(np.median(tempo_FI))
+		# 	if isinstance(median_as, int):
+		# 		median_FI.append(tempo_FI[median_as])
+		# 		median_amp.append(tempo_amp[median_as])
+		# 	else:
+		# 		median_as = median_as[0]
+		# 		median_FI.append(tempo_FI[median_as])
+		# 		median_amp.append(tempo_amp[median_as])
+		# 		input("??????")
+			# print("median_FI = ", median_FI)
+
+		##################################################################################################
+
+
+
 	bins_ = np.linspace(-1.5, 1, 30)
 	plt.hist(median_FI, bins=bins_, edgecolor='k')
 	plt.savefig('out/png/median_FI.png', format = 'png')
@@ -129,7 +212,7 @@ def get_median_value(dict_event, namp_len, whether_plot):
 	if whether_plot:
 		plt.show()
 	plt.close()
-	return median_FI, median_amp, events_key
+	return median_FI, median_amp, events_key, waveform
 
 
 def calculate_EM(median_amp):
@@ -169,63 +252,46 @@ def clust_stats(clust, whether_plot):
 	plt.close()
 
 
-# def new_catalog(labels, event_info, events_key, median_FI, sort_idx):
-# 	k = 1
-# 	new_events_catalog = []
-# 	event_info.values[0][0] = event_info.values[0][0]  \
-# 							  + ' FI' + ' CLUSTER'
-# 	for i in range(len(events_key)):
-# 		for j in range(k, len(event_info.values)):
-# 			if events_key[i] == event_info.values[j][0].split(' ')[0]:
-# 				event_info.values[j][0] = event_info.values[j][0] + ' ' \
-# 					+ str(round(median_FI[i], 2)) + ' ' + str(np.where(sort_idx == labels[i])[0][0])
-# 				new_events_catalog.append(event_info.values[j][0])
-# 				k = j
-# 				break
-
-# 	for i in range(len(sort_idx)):
-# 		idx_cls = np.where(labels == sort_idx[i])[0]
-# 		with open('./out/text/cluster'+str(i)+'.dat', 'w') as f:
-# 			for j in range(len(idx_cls)):
-# 				f.write(new_events_catalog[idx_cls[j]] + '\n')
-
-# 	event_info.to_csv('out/text/new_catalog', index=False, header=None)
-
 def new_catalog(labels, event_info, events_key, median_FI, sort_idx):
-	k = 1
-	print("new_catalog step 1")
+	k = 0
+	event_info_temp = event_info[event_info['StartTime'].isin(events_key)]
+	event_info_temp = event_info_temp.reset_index()
 	new_events_catalog = []
-	event_info.values[0][0] = str(event_info.values[0][0])  \
-							  + ' FI' + ' CLUSTER'
+
+	# event_info_temp.values[0][0] = str(event_info_temp.values[0][0])  \
+	# 						  + ' FI' + ' CLUSTER'
+	# add 2 new column to event catalog
+	event_info_temp['zFI'] = False
+	event_info_temp['zCLUSTER'] = False
+	new_events_catalog.append(str(event_info_temp.keys()))
 	for i in range(len(events_key)):
 		print("1 - ", i)
-		for j in range(k, len(event_info.values)):
-			print(" if {} = {}".format(events_key[i], str(event_info.values[j][0]).split(' ')[0]))
-			sys.stdout.write('\r' + f"Progress: {j}/{len(event_info.values)}")
-			sys.stdout.flush()
-			if events_key[i] == str(event_info.values[j][0]).split(' ')[0]:
-				print("match !!!!!!!")
-				print("{} = {}".format(events_key[i], str(event_info.values[j][0]).split(' ')[0]))
+		for j in range(k, len(event_info_temp.values)):
+			
+			# sys.stdout.write('\r' + f"Progress: {j}/{len(event_info_temp.values)}")
+			# sys.stdout.flush()
+			if events_key[i] == event_info_temp['StartTime'][j]:
 
-				input("click to continue")
-				event_info.values[j][0] = str(event_info.values[j][0]) + ' ' \
-					+ str(round(median_FI[i], 2)) + ' ' + str(np.where(sort_idx == labels[i])[0][0])
-				new_events_catalog.append(str(event_info.values[j][0]))
+				event_info_temp['zFI'][j] = str(round(median_FI[i], 2))
+				event_info_temp['zCLUSTER'][j] = str(np.where(sort_idx == labels[i])[0][0])
+
+				new_events_catalog.append(str(event_info_temp.values[j]))
 				k = j
 				break
-	print("new_catalog step 2")
 	for i in range(len(sort_idx)):
 		print("2 - ", i)
 		idx_cls = np.where(labels == sort_idx[i])[0]
-		with open('./out_jos/text/cluster'+str(i)+'.dat', 'w') as f:
+		with open('./out/text/cluster'+str(i)+'.dat', 'w') as f:
 			for j in range(len(idx_cls)):
 				f.write(new_events_catalog[idx_cls[j]] + '\n')
 
-	event_info.to_csv('out_jos/text/new_catalog', index=False, header=None)
+	event_info_temp.to_csv('out/text/new_catalog', index=False, header=True)
 				 
 
-def plot_rep(clust, amp, sort_idx):
+def plot_rep(clust, amp, sort_idx, waveform, keys, noise_length, rate):
 	labels = np.unique(clust.labels_)
+	print("----- plot_rep -----")
+	print(labels)
 	num_rep = 100
 	mx, my = 10, 10
 	amp = np.array(amp)
@@ -247,9 +313,48 @@ def plot_rep(clust, amp, sort_idx):
 		title = 'out/png/cls'+str(label)+'.pdf'
 		plt.savefig(title, format='pdf')
 		plt.close()
+	# plot waveform
+	num_rep = 20
+	mx, my = 20, 1
+	n_pick = noise_length * rate
+	n_text = int((len(waveform[0])/8)*7)
+	wf = np.array(waveform)
+	for label in labels:
+		idx = np.where(clust.labels_ == sort_idx[label])[0]
+		if len(idx)>num_rep:
+			sel_idx = idx[np.random.choice(len(idx), num_rep)]
+			# the num of every category <= 100 
+		else:
+			sel_idx = idx
+		fig = plt.figure(figsize=(10, 10))
+		for i in range(len(sel_idx)):
+			plt.subplot(mx, my, i+1)
+			# plt.plot(wf[idx[i], :]/np.max(wf[idx[i], :]), c='k', linewidth=2)
+			plt.plot(wf[idx[i], :], c='k', linewidth=2)
+			plt.text(n_text, 0, str(keys[idx[i]]), fontsize = 6,  bbox=dict(facecolor='lightgrey', alpha=0.9))
+			# plt.annotate(str(keys[idx[i]]), fontsize = 6,  bbox=dict(facecolor='yellow', alpha=0.5))
+			plt.axvline(x=n_pick, color='red', linestyle='--', linewidth=1)
+			plt.axis('off')
+		title1 = 'Waveform #' + str(label)
+		title2 = ' ('+str(len(idx))+' members)'
+		fig.suptitle(title1+title2, fontsize=40)
+		title = 'out/png/wf'+str(label)+'.pdf'
+		plt.savefig(title, format='pdf')
+		plt.close()
+
+
 
 #turn it to two function. 1.get the sirt_idx; 2. plot the median spectra
 def freq_sort(labels, amp, n_cls):
+	""" We loop loop through the number of cluster, and for each cluster we extract an array of the corresponding index number from labels
+	which represents the event index. So we do have an array of event index which are in the same cluster = idx_cls
+	We create an empty array with length = "Amp_nmlz"
+	--> Then, we loop through idx_cls (= loop through evnets that are in the same cluster)
+		- we caculate the mean_amp by additioning all amp_nmlz from event that are in the same cluster and we divide by number of events
+		- we append this value in mean_amp_container (= mean of amp_nmlz for all clusters)
+	We record in "max_amp_idx" for each cluster the index of highest 'amp' value 
+	we record in sort_idx the sorted index value of max_amp_idx 
+	"""
 	amp = np.array(amp)
 	mean_amp_container = []
 	for i in range(n_cls):
@@ -269,8 +374,19 @@ def freq_sort(labels, amp, n_cls):
 
 
 def plot_mean_spectra(labels, amp, median_distance, mean_amp_container, sort_idx):
+	""" We loop through each cluster (=len(sort_idx))
+		- idx_cls = array where value are index of events for a same cluster
+		- len_idx = number of events in a cluster
+		- X_cls = filtered median_distance array (2d mirror array) and keep only events for this cluster
+		- median_dist = median dist array from X_cls
+		- i_min = index of min value fron median_dist
+		- Plot in black the amp_nmlz of event from the cluster which has the minimum median_distance with other events from the same cluster
+		- Plot in red the mean_amp_container value of the current cluster
+	"""
 	len_idx = []
 	amp = np.array(amp)
+	print("amp =")
+	print(amp)
 	plt.figure(figsize=(16, 10))
 	for i in range(len(sort_idx)):
 		# retrieve the cluster members
@@ -283,8 +399,8 @@ def plot_mean_spectra(labels, amp, median_distance, mean_amp_container, sort_idx
 		imin = np.argmin(median_dist) # locade of the min 
 		# obtain and plot the stretched stf relative to the reference
 		ax = plt.subplot(4, 5, i+1)
-		plt.plot(amp[idx_cls][imin], linewidth=2, c='#333333')
-		plt.plot(mean_amp_container[sort_idx[i]], linewidth=2, c='#FF3333')
+		plt.plot(amp[idx_cls][imin], linewidth=2, c='#333333')	# black
+		plt.plot(mean_amp_container[sort_idx[i]], linewidth=2, c='#FF3333') # red
 		plt.xticks([])
 		plt.yticks([])
 		plt.axis('off')
@@ -356,23 +472,62 @@ def plot_dendrogram(median_distance, n_cls):
 	if whether_plot:
 		plt.show()
 	plt.close()
-###################################################################
+
+def print_c(*args, sep=' ', end=''):
+    output = sep.join(str(arg) for arg in args)
+    print(output, end=end, flush=True)
+
+
+def run_f(variable):
+	""" decorator function which execute the function only if "variable" is true"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if variable:
+                result = func(*args, **kwargs)
+                return result
+            # else:
+            #     print("Function not executed because the variable is False.")
+        return wrapper
+    return decorator
+
+
+######################################################################################################################################
+######################   MAIN PROGRAM   ##############################################################################################
+######################################################################################################################################
 
 
 if __name__ == '__main__':
+
+
 	#get para from config_json
 	parser = ap.ArgumentParser(
 		prog='Muti-station_volcanic_signals_classification.py',
 		description='classified volcano signals')
 	parser.add_argument('config_json')
-	parser.add_argument(
-		'-P',
-		default=False,
-		action='store_true',
-		help='Plot output')
+	parser.add_argument('-P',default=False,action='store_true',help='Plot output')
+	parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose mode")
+	parser.add_argument("--stream", action="store_true", help="Display all streams plot")
 	args = parser.parse_args()
 	whether_plot = args.P
+	verbose = args.verbose
+	test_pick = args.stream
 
+	@run_f(verbose)
+	def print_x(*args):
+		print(*args)
+
+	@run_f(verbose)
+	def input_x(*args):
+		input(*args)
+
+
+
+	print("Start scripts:")
+	if verbose:
+		print("Verbose mode is activated")
+	print_c("Open config file --> ")
+
+	# Open config file and write parameters into variables
 	with open(args.config_json, "r") as f:
 		params = json.load(f)
 
@@ -382,7 +537,7 @@ if __name__ == '__main__':
 	if not os.path.exists('out/text'):
 		os.makedirs('out/text')
 
-
+	# Declaration variable and dictionary
 	dict_sta = {}
 	dict_event = {}
 	win_snr = 2
@@ -394,96 +549,382 @@ if __name__ == '__main__':
 	#the length of amplitude
 	namp_len = math.ceil(2*win_len*15)
 
-	
+
+	print("ok")
+	print_c("Open inventory --> ")
+	# Inventory declaration 
+	inventory = "2019-10-21_ECGSNetworks_v0.7_KV-AF_SC3-OVG.xml"
+	inv = read_inventory(inventory)
+	print("ok")
+
+
+
+	# Fill Dictionary
+	print("Open station info and events catalog and write them in dictionary and dataframe:")
+	input_x("click to continue...")
 	station_info = pd.read_table(station_list, header=None)
 	for i in range(len(station_info.values)):
 		dict_sta[station_info.values[i][0]] = i
-	event_info = pd.read_table(events_catalog, header=None)
-	for i in range(1, len(event_info.values)):
-		dict_event[event_info.values[i][0].split(' ')[0]] =	 [[] for i in range(len(station_info.values))]
+	event_info = pd.read_table(events_catalog, delimiter=r'\s+')
+	# round the strattime to 2 digit to be able to compare with file starttime
+	event_info['StartTime'] = event_info['StartTime'].apply(lambda x: re.match(r".*\...", x)[0])
+	for i in range(0, len(event_info.values)):
+		# -2 correspond to starttime event 
+		dict_event[event_info['StartTime'][i]] =	[[] for i in range(len(station_info.values))]
 	
-	print("dict_sta = ")
-	print(dict_sta)
-  
-  
-	print("dict_event key = ")
-	print(dict_event.keys())
-	
-	input("wait...")
-	for name, param in dict_sta.items():
-		print(name, param)
-		for sacname in glob.glob("Hawaii_2020/"+name+"/*.SAC"):
-			tr = read(sacname)[0]
-			t = np.arange(tr.stats.npts) / tr.stats.sampling_rate
-			if t[-1] < 10:
-				continue
+	print_x("dict_event =")
+	print_x(dict_event)	
+	print_x("event_info =")
+	print_x(event_info)
+	print_x("dict_sta = ")
+	print_x(dict_sta)
+	input_x("click to continue...")
 
-			tr.filter(type='bandpass', freqmin=1, freqmax=15)
-			rate = tr.stats.sampling_rate
-			datafull = tr.data
-			Data = datafull[100:-100]
-			p_arr, quality = picker(Data, rate)
+
+
+	# Create merged_event dictionary to keep only common event
+	print("Create merged_event dictionary to keep only common event")
+	merged_event = event_info
+	keep_columns = "OriginTime , StartTime, EventID_x"
+	selected_columns = [col.strip() for col in keep_columns.split(',')]
+
+	# Filter merged_event catalog with station catalog one by one (keep only if OriginTime match for all stations)
+	print("event catalog size  = ", len(merged_event))
+	print("Evenet catalog will be filtered by common element with following station:")
+	for name, param in dict_sta.items():
+		station_CAT = glob.glob("PhD_data_class/CAT_2021/DAT/KV/"+name+"/CAT_IN*")
+		for sta_cat in station_CAT:
+
+			sta_event_info = pd.read_table(sta_cat, delimiter=r'\s+')
+			# round the strattime to 2 digit to be able to compare with file starttime
+			merged_event = pd.merge(merged_event, sta_event_info, on='OriginTime')
+			# keep only interested columns
+			merged_event = merged_event[selected_columns]
+			print("--> {}: {} event remaining".format(name, len(merged_event)))
+
+	# Ask user to limit the number of event to be calculated
+	ev_num_max = input("Catalog common event finished, enter a value to limit number of event ineeded, otherwise press Enter!")
+	stream_length = 0
+	noise_length = -1
+	while stream_length == 0:
+		stream_length = int(input("Please enter the length of the stream [sec]:"))
+	while noise_length < 0 or noise_length > stream_length:
+		noise_length = int(input("Please enter the length of the noise [sec]:"))
+	try:
+		if int(ev_num_max) > 1:
+			merged_event = merged_event.sample(n=int(ev_num_max), random_state=42)
+	except:
+		print("error in user data input, keep the entire catalog event")
+
+
+	input("All your streams will be sliced on a length of {} sec with {} sec of noise before P, press enter to continue...".format(str(stream_length), str(noise_length)))
+
+
+
+	print_x("merged_event = ")
+	print_x(merged_event)
+	input_x("click to continue...")
+
+
+
+	print("")
+	print("Loop through each station folder, then loop through eache event and open sequentially each corresponding mseed files found in catalog common.")
+	print("Do the following for each station")
+	print("  ->  Open stream, remove response and apply band filter")
+	print("  ->  Extract starttime from stream")
+	print("  ->  Extract start_time and origin_time from events catalog")
+	print("  ->  Extract corresponding p_arr_man (which is pick manual by Jos in CAT_IN catalog of the corresponding station)")
+	print("  ->  Cut the stream 3 sec before the pick and 17 sec after the pick")
+	print("  ->  Calculate SNR value, fft_amp and amp_nmlz if noise is under threshold")
+	print("  ->  Fill dict_event with these value")
+	print("  ->  Display 2 method of plotting the sismo stream if requested")
+	print("  ->  Plot all the results in the out_xxx_yyy foler (xxx = events number and yyy = station name)")
+	input_x("click to continue...")
+
+
+	# dict_event need to be reinitialise at each loop of station since we plot unique station,keep an original form
+	# of the dict_event free from data station
+	dict_event_original = dict_event
+
+	for name, param in dict_sta.items():
+		print("\r---------------------------------------")
+		print("station  = ", name ,"  param = ", param)
+
+		# Reset station data from dict_event
+		dict_event = dict_event_original
+
+		diff_stt_parr = []
+		count_sta_event = 0
+		for event_id in merged_event['EventID_x']:
+
+			station_dir = glob.glob("PhD_data_class/CAT_2021/DAT/KV/"+name+"/"+str(event_id)+"/*")
+			for sacname in station_dir :
+				try:
+					st = read(sacname)
+					tr = read(sacname)[0]
+
+				except:
+					print(sacname, " is not a readable file for obspy !!!")
+					continue
+				t = np.arange(tr.stats.npts) / tr.stats.sampling_rate
+				if t[-1] < 10:
+					continue
+
+				# Manage counting on terminal to avoid undetermined lenght process
+				count_sta_event += 1
+				total_count = len(merged_event)
+				sys.stdout.write('\r' + f"Progress: {count_sta_event}/{total_count}")
+				sys.stdout.flush()
+
+				# Correction and filtering of signals
+				tr.remove_response(inventory=inv)
+				tr.filter(type='bandpass', freqmin=1, freqmax=15)
+
+				rate = tr.stats.sampling_rate
+				datafull = tr.data
+				# Data = datafull[100:-100]
+				# Data = tr.data
+
+				
+				# read starttime from stream (file mseed)
+				starttime = tr.stats.starttime
+				# round to 2 digit after sec
+				starttime = re.match(r".*\...", str(starttime))[0]
+				# format starttime to be able able to compoare string with event_info
+				starttime = starttime.replace("T", "-")
+
+				# Read from merged dataframe origin and starttime
+				origin_time = merged_event.loc[merged_event['EventID_x'] == int(event_id), 'OriginTime']
+				start_time = merged_event.loc[merged_event['EventID_x'] == int(event_id), 'StartTime']
+
+				# convert to datetime object 
+				origin_time_ = datetime.strptime(origin_time.values[0], "%Y-%m-%d-%H:%M:%S.%f")
+				start_time_ = datetime.strptime(start_time.values[0], "%Y-%m-%d-%H:%M:%S.%f")
+
+				p_arr_man = picker_new(sacname)
+				if not p_arr_man:
+					continue
+	
+				# convert p_arr to datetime object
+				p_arr_man_ = datetime.strptime(str(p_arr_man), "%S.%f")
+				noise_time_  = origin_time_ - start_time_ + timedelta(seconds = float(p_arr_man))
+				pick_abs_ = origin_time_ + timedelta(seconds = float(p_arr_man))
+
+				noise_time = float(noise_time_.total_seconds())
+				noise_time_pt = noise_time * rate
+
+				# Cut the stream to have 3 seconds before the Pick and seventeen after
+				cut_start_ = noise_time_  - timedelta(seconds = noise_length)
+				cut_start = float(cut_start_.total_seconds())
+				cut_start_pt = int(cut_start * rate)
+
+				# Keep the 20 seconds of the cutted stream
+				cut_end_pt = int((stream_length * rate) + cut_start_pt)
+				Data = datafull[cut_start_pt:cut_end_pt]
+				
+
+				# To use to calculate noise but be careful that p_arr can be < 2 in several cases
+				p_arr = noise_length
+
+				# if p_arr > win_snr and p_arr < t[-1]-win_snr and quality > snr:
+				if p_arr > win_snr and p_arr < t[-1]-win_snr:
+
+					snr_value = SNR(Data, p_arr, rate, win_snr)
+					if snr_value > snr:
+						amp, freq, fi = fft_amp(Data, rate, p_arr, win_len)
+						Amp_nmlz, freq_nmlz = amp_nmlz(freq, amp)
+						name_event = starttime
+
+
+						if (name_event in dict_event.keys()):
+							dict_event[name_event][param].append(Amp_nmlz)
+							dict_event[name_event][param].append(fi)
+							# heavy but add by mjas to plot stream
+							dict_event[name_event][param].append(Data)
+
+				#--------------------------------------------------------
+				########### Display plot (plot the event) ################
+				
+				if test_pick:
+				
 			
 
-			if p_arr > win_snr and p_arr < t[-1]-win_snr and quality > snr:
-				snr_value = SNR(Data, p_arr, rate, win_snr)
-				if snr_value > snr:
-					amp, freq, fi = fft_amp(Data, rate, p_arr, win_len)
-					Amp_nmlz, freq_nmlz = amp_nmlz(freq, amp)
-					# Put the events that meet the conditions into the dictionary
-					name_event = '-'.join(sacname.split('.')[5:8])
-					name_event = '-'.join(name_event.split('-')[0:3])
-					name_event = str(UTCDateTime(name_event) + 5)
-					print("name event = ", name_event)
-					if (name_event in dict_event.keys()):
-						#get the amp and the FI value
-# 						print("---- {}   --- add in dict_event Amp_nmlz amd fi".format(name_event))
-# 						print("Amp_nmlz = ", Amp_nmlz)
-# 						print("fi = ", fi)
-						dict_event[name_event][param].append(Amp_nmlz)
-						dict_event[name_event][param].append(fi)
-					# else:
-					#	  #it's better to open a file and write them in it.
-					#	  print(name+' '+name_event+'not in the catalog')
-###########################################################################
-	#calculate
-	dict_event = remove_dict(dict_event, dict_sta, namp_len)
-	print("dict_event key = ")
-	print(dict_event.keys())
-	print("dict_event = ")
-	print(dict_event)
-
-	print("Get Median Value")
-	median_FI, median_amp, events_key = get_median_value(dict_event, namp_len, whether_plot)
-	print("Calculate EM")
-	median_distance = calculate_EM(median_amp)
-	print("Plot Matrix")
-	plot_matrix(median_distance)
-	print("Plot dendrogram")
-	plot_dendrogram(median_distance, params["n_cls"])
-	#Hierarchical clustering
-	print("AgglomerativeClustering")
-	clust = AgglomerativeClustering(n_clusters=params["n_cls"],
-									linkage='complete',
-									affinity='precomputed').fit(median_distance)
-	#dendrogram
-	print("clust_stats")
-	clust_stats(clust, whether_plot)
-	# plot mean spectra
-	print("plot mean spectra")
-	mean_amp_container, sort_idx = freq_sort(clust.labels_, median_amp, params["n_cls"])
-	len_idx = plot_mean_spectra(clust.labels_, median_amp, median_distance, mean_amp_container, sort_idx)
-	#plot 100 spectra
-	print("plot 100 spectra")
-	plot_rep(clust, median_amp, sort_idx)
-	# plot freq-evengy space
-	print("freq-evengy space")
-	freq_energy_distribution(mean_amp_container, freq, sort_idx, len_idx)
-	#save files
-	print("save file")
-	new_catalog(clust.labels_, event_info, events_key, median_FI, sort_idx)
+					# Extract x-axis values (time)
+					print("tr.stats.delta = ", tr.stats.delta)
 
 
+					# Define data ax1
+					x_1 = np.arange(len(datafull))
+
+					specific_time_1	 = x_1[0] + noise_time_pt
+					y_1 = datafull
+					supper_1 = np.ma.masked_where(x_1 < specific_time_1, x_1)
+					slower_1 = np.ma.masked_where(x_1 > specific_time_1, x_1)
+				
+					# Define data ax1
+					x_2 = np.arange(len(Data)) * tr.stats.delta
+					specific_time_2	 = x_2[0] + noise_length
+					y_2 = Data
+					supper_2 = np.ma.masked_where(x_2 < specific_time_2, x_2)
+					slower_2 = np.ma.masked_where(x_2 > specific_time_2, x_2)
+				
+					# Create a figure
+					fig = plt.figure(figsize=(24, 14))
+
+					plt.subplot(2, 1, 1)
+
+					plt.plot(slower_2, y_2, supper_2, y_2)	
+					plt.title(event_id)
+					plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
+					# Plot in obspy
+					print(" ---- start plotting obspy -----")
+					# Specify the desired time interval (start and end times)
+					start_time_obspy_ = start_time_ + cut_start_
+					cut_start_obspy = datetime.strftime(start_time_obspy_, "%Y-%m-%dT%H:%M:%S.%f")
+					cut_end_ = start_time_obspy_ + timedelta(seconds = stream_length)
+					cut_end_obspy = datetime.strftime(cut_end_, "%Y-%m-%dT%H:%M:%S.%f")
+
+					pick_abs_obspy= datetime.strftime(pick_abs_, "%Y-%m-%dT%H:%M:%S.%f")
+
+
+					start_time = UTCDateTime(cut_start_obspy)  # Replace with your desired start time
+					end_time = UTCDateTime(cut_end_obspy)    # Replace with your desired end time
+					pick_time = UTCDateTime(pick_abs_obspy) 
+
+					# Filter the Stream to retain only data within the specified time interval
+					stream_interval = st.slice(starttime=start_time, endtime=end_time)
+					tr2 = stream_interval[0]
+					tr2.remove_response(inventory=inv)
+					tr2.filter(type='bandpass', freqmin=1, freqmax=15)
+
+
+					print(st[0].stats.starttime)
+					print(tr2.stats.starttime)
+
+					# Extract timestamps (in seconds from the start time) from the sliced Stream
+					timestamps = tr2.times()  # Assuming there is only one channel in the stream
+					# create an array of timedelta
+					timedelta_objects = [timedelta(seconds=x) for x in timestamps]
+
+					print("timedelta_objects[0] = ", timedelta_objects[0])
+
+					# extract strattime from obspy stream and convert the UTCDatetime to DateandTime
+					starttime_obspy = tr2.stats.starttime
+					starttime_ = UTCDateTime(starttime_obspy).datetime
+
+
+					print("starttime_ = ", starttime_)
+					# Create array of time axis for sliced stream with datetime object
+					datetime_objects = [x + starttime_ for x in timedelta_objects ]
+
+					print("datetime_objects[0] = ", datetime_objects[0])
+
+					# Extract data from the sliced Stream
+					data = tr2.data  # Assuming there is only one channel in the stream
+					plt.subplot(2, 1, 2)
+
+					plt.plot(datetime_objects, data)
+					plt.axvline(x=pick_abs_, color='red', linestyle='--')
+
+					# Customize the plot (optional)
+					plt.title(event_id)
+					plt.xlabel('Time')
+					plt.ylabel('Amplitude')
+
+					# Rotate and format the x-axis labels for better readability
+					plt.xticks(rotation=20, ha='right')
+					plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d %H:%M:%S'))
+					plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
+
+
+					# Create the quit button
+					button_ax = plt.axes([0.8, 0.05, 0.1, 0.075])  # Adjust the position and size as needed
+					quit_button = Button(button_ax, 'Quit')
+
+					# Add the quit button click event handler
+					quit_button.on_clicked(quit_button_clicked)
+
+					plt.show()
+
+
+					########### Ending  Display plot (plot the event) ################
+					#--------------------------------------------------------------------#
+
+		###########################################################################
+		print("")
+		input_x("Display updated dict_event dict, continue...")
+		print_c("dict_event = ")
+		print_x(dict_event)
+		print_c("dict_event length = ")
+		print(len(dict_event))
+		input_x("click to continue...")
+		print("")
+		print("remove dict function execution")
+		input_x("click to continue...")
+		dict_event = remove_dict(dict_event, dict_sta, namp_len)
+
+		print_x("dict_event = ")
+		print_x(dict_event)
+		print_x("dict_event key = ")
+		print_x(dict_event.keys())
+		print_c("dict_event length = ")
+		print(len(dict_event))
+		input_x("click to continue...")
+		# input("Datas are read, Click to continue to ....")
+		
+		print("Get Median Value")
+		median_FI, median_amp, events_key, waveform = get_median_value(dict_event, namp_len, whether_plot)
+
+
+		print("Calculate EM")
+		median_distance = calculate_EM(median_amp)
+		print("Plot Matrix")
+		plot_matrix(median_distance)
+		print("Plot dendrogram")
+		plot_dendrogram(median_distance, params["n_cls"])
+		#Hierarchical clustering
+		print("AgglomerativeClustering")
+		clust = AgglomerativeClustering(n_clusters=params["n_cls"],
+										linkage='complete',
+										affinity='precomputed').fit(median_distance)
+	
+
+		#dendrogram
+		# print("clust_stats")
+		clust_stats(clust, whether_plot)
+		print("clust  = ", dir(clust))
+		print("clust labels = ", clust.labels_)
+		input("click to continue...")	
+		# plot mean spectra
+		print("plot mean spectra")
+		mean_amp_container, sort_idx = freq_sort(clust.labels_, median_amp, params["n_cls"])
+
+		len_idx = plot_mean_spectra(clust.labels_, median_amp, median_distance, mean_amp_container, sort_idx)
+		#plot 100 spectra
+		print("plot 100 spectra")
+
+
+		print("median_amp  = ", median_amp)
+		input("click to continue...")
+		print("sort_idx  = ", sort_idx)
+		print(len(waveform))
+		print(len(events_key))
+		print(len(median_amp))
+		input("click to continue...")	
+
+		plot_rep(clust, median_amp, sort_idx, waveform, events_key, noise_length, rate)
+		# plot freq-evengy space
+		print("freq-evengy space")
+		freq_energy_distribution(mean_amp_container, freq, sort_idx, len_idx)
+		#save files
+		print("save new catalog")
+		new_catalog(clust.labels_, event_info, events_key, median_FI, sort_idx)
+
+		# Move results in final directory with station name
+		station_folder = "out_{}_{}".format(len(dict_event), name)
+		shutil.copytree('out', station_folder, dirs_exist_ok=True)
 
 
 

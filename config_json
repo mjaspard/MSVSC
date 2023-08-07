@@ -1,10 +1,10 @@
 {
     "data_dir": "/home/xincui",
-    "snr": 3,
+    "snr": 2,
     "win_len": 1.28,
     "##station_list is a file, the content is station names": "",
     "station_list": "station_list",
-    "events_catalog": "events_catalog",
-    "least_station": 5,
-    "n_cls": 20
+    "events_catalog": "CAT_IN_20210607_165737.txt",
+    "least_station": 1,
+    "n_cls": 8
 }
